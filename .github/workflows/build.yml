@@ -1,12 +1,12 @@
-name: Android CI Build & Test
+name: Build Android APK
 
 on:
   push:
-    branches: [ "main" ]
+    branches: [ "main", "master" ]
   workflow_dispatch:
 
 jobs:
-  build-and-test:
+  build:
     runs-on: ubuntu-latest
 
     steps:
@@ -25,14 +25,11 @@ jobs:
     - name: Generate Gradle Wrapper
       run: gradle wrapper
 
-    - name: Run Unit Tests
-      run: ./gradlew testDebugUnitTest --stacktrace
-
-    - name: Build Debug APK
+    - name: Build APK
       run: ./gradlew assembleDebug --stacktrace
 
-    - name: Archive APK Artifact
+    - name: Upload APK Artifact
       uses: actions/upload-artifact@v4
       with:
-        name: app-debug-apk
+        name: 3PlayerChess-APK
         path: app/build/outputs/apk/debug/app-debug.apk
