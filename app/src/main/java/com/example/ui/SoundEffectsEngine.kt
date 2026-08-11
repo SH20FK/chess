@@ -13,7 +13,11 @@ object SoundEffectsEngine {
 
     private val sampleRate = 22050
 
+    var isSoundEnabled: Boolean = true
+    var soundVolume: Float = 0.8f // 0.0f to 1.0f
+
     fun playMoveSound() {
+        if (!isSoundEnabled || soundVolume <= 0f) return
         CoroutineScope(Dispatchers.Default).launch {
             try {
                 val numSamples = sampleRate / 10 // 100ms
@@ -23,7 +27,7 @@ object SoundEffectsEngine {
                     val time = i.toDouble() / sampleRate
                     val envelope = (1.0 - (i.toDouble() / numSamples))
                     val wave = sin(2.0 * Math.PI * freq * time)
-                    buffer[i] = (wave * 12000 * envelope).toInt().toShort()
+                    buffer[i] = (wave * 12000 * soundVolume * envelope).toInt().toShort()
                 }
                 playBuffer(buffer)
             } catch (_: Exception) {}
@@ -31,6 +35,7 @@ object SoundEffectsEngine {
     }
 
     fun playCaptureSound() {
+        if (!isSoundEnabled || soundVolume <= 0f) return
         CoroutineScope(Dispatchers.Default).launch {
             try {
                 val numSamples = sampleRate / 6 // 160ms
@@ -41,7 +46,7 @@ object SoundEffectsEngine {
                     val wave = sin(2.0 * Math.PI * freq * (i.toDouble() / sampleRate))
                     val noise = (Random.nextDouble() * 2.0 - 1.0) * 0.3
                     val envelope = 1.0 - progress
-                    buffer[i] = ((wave + noise) * 16000 * envelope).toInt().toShort()
+                    buffer[i] = ((wave + noise) * 16000 * soundVolume * envelope).toInt().toShort()
                 }
                 playBuffer(buffer)
             } catch (_: Exception) {}
@@ -49,6 +54,7 @@ object SoundEffectsEngine {
     }
 
     fun playNukeExplosionSound() {
+        if (!isSoundEnabled || soundVolume <= 0f) return
         CoroutineScope(Dispatchers.Default).launch {
             try {
                 val numSamples = sampleRate * 1 // 1 second explosion
@@ -60,7 +66,7 @@ object SoundEffectsEngine {
                     val rumble = sin(2.0 * Math.PI * rumbleFreq * (i.toDouble() / sampleRate))
                     val envelope = Math.pow(1.0 - progress, 1.5)
                     val valSample = (noise * 0.7 + rumble * 0.3) * envelope
-                    buffer[i] = (valSample * 28000).toInt().coerceIn(-32767, 32767).toShort()
+                    buffer[i] = (valSample * 28000 * soundVolume).toInt().coerceIn(-32767, 32767).toShort()
                 }
                 playBuffer(buffer)
             } catch (_: Exception) {}
@@ -68,6 +74,7 @@ object SoundEffectsEngine {
     }
 
     fun playAirstrikeSound() {
+        if (!isSoundEnabled || soundVolume <= 0f) return
         CoroutineScope(Dispatchers.Default).launch {
             try {
                 val numSamples = (sampleRate * 0.8).toInt()
@@ -77,7 +84,7 @@ object SoundEffectsEngine {
                     val freq = 120.0 + (sin(progress * Math.PI) * 500.0)
                     val wave = sin(2.0 * Math.PI * freq * (i.toDouble() / sampleRate))
                     val envelope = sin(progress * Math.PI)
-                    buffer[i] = (wave * 18000 * envelope).toInt().toShort()
+                    buffer[i] = (wave * 18000 * soundVolume * envelope).toInt().toShort()
                 }
                 playBuffer(buffer)
             } catch (_: Exception) {}

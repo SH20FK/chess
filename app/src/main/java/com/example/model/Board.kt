@@ -3,214 +3,239 @@ package com.example.model
 import kotlin.math.abs
 
 class ChessBoard {
-    val rows = 12
-    val cols = 12
-
-    // Grid representing the board
-    private val cells = Array(rows) { r ->
-        Array(cols) { c ->
-            BoardCell(
-                pos = Position(r, c),
-                piece = null,
-                state = CellState.NORMAL,
-                Sector = getSectorForPosition(r, c)
-            )
-        }
-    }
+    val boardRadius = 5 // Hexagon radius 5 -> 91 cells total
+    private val cells = mutableMapOf<HexPos, BoardCell>()
 
     init {
         resetBoard()
     }
 
-    private fun getSectorForPosition(r: Int, c: Int): Int {
-        return when {
-            r < 4 && c in 2..9 -> 0 // Red sector
-            c < 6 && r in 6..11 -> 1 // Blue sector
-            c >= 6 && r in 6..11 -> 2 // Green sector
-            else -> 3 // Center / Neutral
-        }
+    fun getAllCells(): Collection<BoardCell> = cells.values
+
+    fun getCell(pos: HexPos): BoardCell? = cells[pos]
+
+    fun setCellState(pos: HexPos, state: CellState) {
+        val current = cells[pos] ?: return
+        cells[pos] = current.copy(state = state)
     }
 
-    fun getCell(r: Int, c: Int): BoardCell? {
-        if (r !in 0 until rows || c !in 0 until cols) return null
-        return cells[r][c]
-    }
-
-    fun setCellState(r: Int, c: Int, state: CellState) {
-        if (r in 0 until rows && c in 0 until cols) {
-            cells[r][c] = cells[r][c].copy(state = state)
-        }
-    }
-
-    fun setPiece(r: Int, c: Int, piece: ChessPiece?) {
-        if (r in 0 until rows && c in 0 until cols) {
-            cells[r][c] = cells[r][c].copy(piece = piece)
-        }
+    fun setPiece(pos: HexPos, piece: ChessPiece?) {
+        val current = cells[pos] ?: return
+        cells[pos] = current.copy(piece = piece)
     }
 
     fun resetBoard() {
-        for (r in 0 until rows) {
-            for (c in 0 until cols) {
-                cells[r][c] = BoardCell(Position(r, c), null, CellState.NORMAL, getSectorForPosition(r, c))
+        cells.clear()
+
+        // Generate all hex cells within boardRadius
+        for (q in -boardRadius..boardRadius) {
+            val r1 = maxOf(-boardRadius, -q - boardRadius)
+            val r2 = minOf(boardRadius, -q + boardRadius)
+            for (r in r1..r2) {
+                val pos = HexPos(q, r)
+                val sector = determineSector(pos)
+                cells[pos] = BoardCell(pos = pos, piece = null, state = CellState.NORMAL, sector = sector)
             }
         }
 
-        // Initialize Red Player (Bottom, Sector 0)
-        setupPlayerArmy(PlayerColor.RED, mainRow = 0, pawnRow = 1, startCol = 2)
-
-        // Initialize Blue Player (Top Left, Sector 1)
-        setupPlayerArmy(PlayerColor.BLUE, mainRow = 11, pawnRow = 10, startCol = 0)
-
-        // Initialize Green Player (Top Right, Sector 2)
-        setupPlayerArmy(PlayerColor.GREEN, mainRow = 11, pawnRow = 10, startCol = 4)
+        // Setup 3 armies
+        setupRedArmy()
+        setupBlueArmy()
+        setupGreenArmy()
     }
 
-    private fun setupPlayerArmy(color: PlayerColor, mainRow: Int, pawnRow: Int, startCol: Int) {
-        val piecesOrder = listOf(
-            PieceType.ROOK,
-            PieceType.KNIGHT,
-            PieceType.BISHOP,
-            PieceType.QUEEN,
-            PieceType.KING,
-            PieceType.BISHOP,
-            PieceType.KNIGHT,
-            PieceType.ROOK
+    private fun determineSector(pos: HexPos): Int {
+        val dist = pos.distanceTo(HexPos(0, 0))
+        if (dist <= 1) return 3 // Center Tactical Zone
+
+        return when {
+            pos.r >= 2 && pos.s <= 1 -> 0 // Red Sector (South)
+            pos.q <= -2 && pos.r <= 1 -> 1 // Blue Sector (North-West)
+            pos.s >= 2 && pos.q <= 1 -> 2 // Green Sector (North-East)
+            else -> 3
+        }
+    }
+
+    private fun setupRedArmy() {
+        // Red back row at r = 4, 5
+        val backRow = listOf(
+            HexPos(-2, 5), HexPos(-1, 5), HexPos(0, 5), HexPos(1, 4), HexPos(0, 4), HexPos(-1, 4), HexPos(2, 3)
         )
-
-        for (i in piecesOrder.indices) {
-            val col = startCol + i
-            if (col in 0 until cols) {
-                val piece = ChessPiece("${color.name}_${piecesOrder[i]}_$i", piecesOrder[i], color)
-                setPiece(mainRow, col, piece)
+        val pieces = listOf(
+            PieceType.ROOK, PieceType.KNIGHT, PieceType.QUEEN, PieceType.KING, PieceType.BISHOP, PieceType.KNIGHT, PieceType.ROOK
+        )
+        for (i in pieces.indices) {
+            if (i < backRow.size) {
+                val pos = backRow[i]
+                setPiece(pos, ChessPiece("RED_${pieces[i]}_$i", pieces[i], PlayerColor.RED))
             }
         }
 
-        // Pawns (Chocolate Cornets)
-        for (i in 0 until 8) {
-            val col = startCol + i
-            if (col in 0 until cols) {
-                val pawn = ChessPiece("${color.name}_PAWN_$i", PieceType.PAWN, color)
-                setPiece(pawnRow, col, pawn)
-            }
+        // Red pawns at r = 3
+        val pawnRow = listOf(
+            HexPos(-2, 4), HexPos(-1, 3), HexPos(0, 3), HexPos(1, 3), HexPos(2, 2), HexPos(-3, 5), HexPos(3, 2)
+        )
+        for (i in pawnRow.indices) {
+            setPiece(pawnRow[i], ChessPiece("RED_PAWN_$i", PieceType.PAWN, PlayerColor.RED))
         }
     }
 
-    fun getValidMoves(pos: Position): List<Position> {
-        val cell = getCell(pos.row, pos.col) ?: return emptyList()
+    private fun setupBlueArmy() {
+        // Blue back row at q = -4, -5
+        val backRow = listOf(
+            HexPos(-5, 2), HexPos(-5, 1), HexPos(-5, 0), HexPos(-4, -1), HexPos(-4, 0), HexPos(-4, 1), HexPos(-3, -2)
+        )
+        val pieces = listOf(
+            PieceType.ROOK, PieceType.KNIGHT, PieceType.QUEEN, PieceType.KING, PieceType.BISHOP, PieceType.KNIGHT, PieceType.ROOK
+        )
+        for (i in pieces.indices) {
+            if (i < backRow.size) {
+                val pos = backRow[i]
+                setPiece(pos, ChessPiece("BLUE_${pieces[i]}_$i", pieces[i], PlayerColor.BLUE))
+            }
+        }
+
+        // Blue pawns
+        val pawnRow = listOf(
+            HexPos(-4, 2), HexPos(-3, 1), HexPos(-3, 0), HexPos(-3, -1), HexPos(-2, -2), HexPos(-5, 3), HexPos(-2, -3)
+        )
+        for (i in pawnRow.indices) {
+            setPiece(pawnRow[i], ChessPiece("BLUE_PAWN_$i", PieceType.PAWN, PlayerColor.BLUE))
+        }
+    }
+
+    private fun setupGreenArmy() {
+        // Green back row at s = 4, 5
+        val backRow = listOf(
+            HexPos(3, -5), HexPos(4, -5), HexPos(5, -5), HexPos(5, -4), HexPos(4, -4), HexPos(3, -4), HexPos(2, -5)
+        )
+        val pieces = listOf(
+            PieceType.ROOK, PieceType.KNIGHT, PieceType.QUEEN, PieceType.KING, PieceType.BISHOP, PieceType.KNIGHT, PieceType.ROOK
+        )
+        for (i in pieces.indices) {
+            if (i < backRow.size) {
+                val pos = backRow[i]
+                setPiece(pos, ChessPiece("GREEN_${pieces[i]}_$i", pieces[i], PlayerColor.GREEN))
+            }
+        }
+
+        // Green pawns
+        val pawnRow = listOf(
+            HexPos(2, -4), HexPos(3, -3), HexPos(4, -3), HexPos(3, -2), HexPos(2, -2), HexPos(1, -3), HexPos(5, -3)
+        )
+        for (i in pawnRow.indices) {
+            setPiece(pawnRow[i], ChessPiece("GREEN_PAWN_$i", PieceType.PAWN, PlayerColor.GREEN))
+        }
+    }
+
+    // Hex Direction Vectors
+    val orthDirs = listOf(
+        HexPos(1, 0), HexPos(1, -1), HexPos(0, -1), HexPos(-1, 0), HexPos(-1, 1), HexPos(0, 1)
+    )
+
+    val diagDirs = listOf(
+        HexPos(2, -1), HexPos(1, 1), HexPos(-1, 2), HexPos(-2, 1), HexPos(-1, -1), HexPos(1, -2)
+    )
+
+    val knightOffsets = listOf(
+        HexPos(2, 1), HexPos(1, 2), HexPos(-1, 3), HexPos(-2, 3), HexPos(-3, 2), HexPos(-3, 1),
+        HexPos(-2, -1), HexPos(-1, -2), HexPos(1, -3), HexPos(2, -3), HexPos(3, -2), HexPos(3, -1)
+    )
+
+    fun getValidMoves(pos: HexPos): List<HexPos> {
+        val cell = getCell(pos) ?: return emptyList()
         val piece = cell.piece ?: return emptyList()
         if (cell.state == CellState.CRATER_DESTROYED) return emptyList()
 
-        val validMoves = mutableListOf<Position>()
+        val validMoves = mutableListOf<HexPos>()
 
         when (piece.type) {
             PieceType.PAWN -> getPawnMoves(pos, piece.color, validMoves)
             PieceType.KNIGHT -> getKnightMoves(pos, piece.color, validMoves)
-            PieceType.BISHOP -> getSlidingMoves(pos, piece.color, validMoves, listOf(Pair(1,1), Pair(1,-1), Pair(-1,1), Pair(-1,-1)))
-            PieceType.ROOK -> getSlidingMoves(pos, piece.color, validMoves, listOf(Pair(1,0), Pair(-1,0), Pair(0,1), Pair(0,-1)))
-            PieceType.QUEEN -> getSlidingMoves(pos, piece.color, validMoves, listOf(
-                Pair(1,0), Pair(-1,0), Pair(0,1), Pair(0,-1),
-                Pair(1,1), Pair(1,-1), Pair(-1,1), Pair(-1,-1)
-            ))
+            PieceType.BISHOP -> getSlidingMoves(pos, piece.color, validMoves, diagDirs)
+            PieceType.ROOK -> getSlidingMoves(pos, piece.color, validMoves, orthDirs)
+            PieceType.QUEEN -> getSlidingMoves(pos, piece.color, validMoves, orthDirs + diagDirs)
             PieceType.KING -> getKingMoves(pos, piece.color, validMoves)
         }
 
         return validMoves
     }
 
-    private fun getPawnMoves(pos: Position, color: PlayerColor, moves: MutableList<Position>) {
-        val forwardDir = when (color) {
-            PlayerColor.RED -> 1
-            PlayerColor.BLUE -> -1
-            PlayerColor.GREEN -> -1
+    private fun getPawnMoves(pos: HexPos, color: PlayerColor, moves: MutableList<HexPos>) {
+        // Pawns advance toward center (0,0)
+        val forwardDirs = when (color) {
+            PlayerColor.RED -> listOf(HexPos(0, -1), HexPos(1, -1), HexPos(-1, 0))
+            PlayerColor.BLUE -> listOf(HexPos(1, 0), HexPos(1, -1), HexPos(0, 1))
+            PlayerColor.GREEN -> listOf(HexPos(-1, 0), HexPos(0, 1), HexPos(-1, 1))
         }
 
-        val nextR = pos.row + forwardDir
-        if (isValidStep(nextR, pos.col, color, canCapture = false)) {
-            moves.add(Position(nextR, pos.col))
-        }
+        for (dir in forwardDirs) {
+            val targetPos = HexPos(pos.q + dir.q, pos.r + dir.r)
+            val targetCell = getCell(targetPos) ?: continue
+            if (targetCell.state == CellState.CRATER_DESTROYED) continue
 
-        // Diagonal captures
-        for (dc in listOf(-1, 1)) {
-            val capC = pos.col + dc
-            val targetCell = getCell(nextR, capC)
-            if (targetCell != null && targetCell.state != CellState.CRATER_DESTROYED) {
-                if (targetCell.piece != null && targetCell.piece.color != color) {
-                    moves.add(Position(nextR, capC))
-                }
+            if (targetCell.piece == null) {
+                moves.add(targetPos)
+            } else if (targetCell.piece.color != color) {
+                // Capture
+                moves.add(targetPos)
             }
         }
     }
 
-    private fun getKnightMoves(pos: Position, color: PlayerColor, moves: MutableList<Position>) {
-        val offsets = listOf(
-            Pair(2, 1), Pair(2, -1), Pair(-2, 1), Pair(-2, -1),
-            Pair(1, 2), Pair(1, -2), Pair(-1, 2), Pair(-1, -2)
-        )
-        for ((dr, dc) in offsets) {
-            val nr = pos.row + dr
-            val nc = pos.col + dc
-            if (isValidStep(nr, nc, color, canCapture = true)) {
-                moves.add(Position(nr, nc))
+    private fun getKnightMoves(pos: HexPos, color: PlayerColor, moves: MutableList<HexPos>) {
+        for (offset in knightOffsets) {
+            val targetPos = HexPos(pos.q + offset.q, pos.r + offset.r)
+            if (isValidStep(targetPos, color, canCapture = true)) {
+                moves.add(targetPos)
             }
         }
     }
 
     private fun getSlidingMoves(
-        pos: Position,
+        pos: HexPos,
         color: PlayerColor,
-        moves: MutableList<Position>,
-        dirs: List<Pair<Int, Int>>
+        moves: MutableList<HexPos>,
+        dirs: List<HexPos>
     ) {
-        for ((dr, dc) in dirs) {
-            var currR = pos.row + dr
-            var currC = pos.col + dc
-            while (currR in 0 until rows && currC in 0 until cols) {
-                val targetCell = getCell(currR, currC) ?: break
-                if (targetCell.state == CellState.CRATER_DESTROYED) break // Blocked by crater
+        for (dir in dirs) {
+            var step = 1
+            while (true) {
+                val targetPos = HexPos(pos.q + dir.q * step, pos.r + dir.r * step)
+                val targetCell = getCell(targetPos) ?: break
+                if (targetCell.state == CellState.CRATER_DESTROYED) break
 
                 if (targetCell.piece == null) {
-                    moves.add(Position(currR, currC))
+                    moves.add(targetPos)
                 } else {
                     if (targetCell.piece.color != color) {
-                        moves.add(Position(currR, currC)) // Capture
+                        moves.add(targetPos) // Capture
                     }
-                    break // Stop sliding after encountering any piece
+                    break // Blocked after encountering piece
                 }
-                currR += dr
-                currC += dc
+                step++
             }
         }
     }
 
-    private fun getKingMoves(pos: Position, color: PlayerColor, moves: MutableList<Position>) {
-        for (dr in -1..1) {
-            for (dc in -1..1) {
-                if (dr == 0 && dc == 0) continue
-                val nr = pos.row + dr
-                val nc = pos.col + dc
-                if (isValidStep(nr, nc, color, canCapture = true)) {
-                    moves.add(Position(nr, nc))
-                }
+    private fun getKingMoves(pos: HexPos, color: PlayerColor, moves: MutableList<HexPos>) {
+        val allDirs = orthDirs + diagDirs
+        for (dir in allDirs) {
+            val targetPos = HexPos(pos.q + dir.q, pos.r + dir.r)
+            if (isValidStep(targetPos, color, canCapture = true)) {
+                moves.add(targetPos)
             }
         }
     }
 
-    private fun isValidStep(r: Int, c: Int, color: PlayerColor, canCapture: Boolean): Boolean {
-        val targetCell = getCell(r, c) ?: return false
+    private fun isValidStep(targetPos: HexPos, color: PlayerColor, canCapture: Boolean): Boolean {
+        val targetCell = getCell(targetPos) ?: return false
         if (targetCell.state == CellState.CRATER_DESTROYED) return false
         if (targetCell.piece == null) return true
         return canCapture && targetCell.piece.color != color
     }
 
     fun isKingAlive(color: PlayerColor): Boolean {
-        for (r in 0 until rows) {
-            for (c in 0 until cols) {
-                val piece = cells[r][c].piece
-                if (piece != null && piece.color == color && piece.type == PieceType.KING) {
-                    return true
-                }
-            }
-        }
-        return false
+        return cells.values.any { it.piece?.color == color && it.piece?.type == PieceType.KING }
     }
 }

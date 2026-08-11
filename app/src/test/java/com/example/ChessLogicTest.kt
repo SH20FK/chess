@@ -1,9 +1,9 @@
 package com.example
 
 import com.example.model.ChessBoard
+import com.example.model.HexPos
 import com.example.model.PieceType
 import com.example.model.PlayerColor
-import com.example.model.Position
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -22,11 +22,12 @@ class ChessLogicTest {
     @Test
     fun testPawnValidMoves() {
         val board = ChessBoard()
-        val pawnCell = board.getCell(1, 2)
+        val pawnPos = HexPos(0, 3)
+        val pawnCell = board.getCell(pawnPos)
         assertNotNull(pawnCell?.piece)
         assertEquals(PieceType.PAWN, pawnCell?.piece?.type)
 
-        val moves = board.getValidMoves(Position(1, 2))
+        val moves = board.getValidMoves(pawnPos)
         assertTrue(moves.isNotEmpty())
     }
 

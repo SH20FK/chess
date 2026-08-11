@@ -17,19 +17,36 @@ enum class TacticalWeapon {
     AIRSTRIKE
 }
 
-data class ExplosionEffect(
+enum class AppScreen {
+    MAIN_MENU,
+    GAME,
+    SETTINGS,
+    RULES
+}
+
+data class SettingsState(
+    val isSoundEnabled: Boolean = true,
+    val soundVolume: Float = 0.8f,
+    val aiDifficultyName: String = "Сбалансированный", // "Быстрый", "Сбалансированный", "Мастер"
+    val aiDelayMs: Long = 800L,
+    val showMoveHints: Boolean = true,
+    val colorTheme: String = "Пастельный Песок", // "Пастельный Песок", "Мятный Бриз", "Лавандовый Сон"
+    val particleEffects: Boolean = true
+)
+
+data class HexExplosionEffect(
     val id: String,
-    val row: Int,
-    val col: Int,
+    val hexPos: HexPos,
     val radius: Float,
     val colorHex: Long,
     val timestamp: Long = System.currentTimeMillis()
 )
 
 data class GameState(
+    val currentScreen: AppScreen = AppScreen.MAIN_MENU,
     val activePlayer: PlayerColor = PlayerColor.RED,
-    val selectedPos: Position? = null,
-    val validMoves: List<Position> = emptyList(),
+    val selectedHex: HexPos? = null,
+    val validMoves: List<HexPos> = emptyList(),
     val activeWeapon: TacticalWeapon = TacticalWeapon.NONE,
     val isVsAi: Boolean = true,
     val redEnergy: Int = 50,
@@ -38,11 +55,14 @@ data class GameState(
     val capturedRed: List<PieceType> = emptyList(),
     val capturedBlue: List<PieceType> = emptyList(),
     val capturedGreen: List<PieceType> = emptyList(),
-    val gameLogs: List<String> = listOf("Битва Трех Держав началась! Захватывайте центр для получения ядерной энергии."),
-    val activeExplosions: List<ExplosionEffect> = emptyList(),
+    val gameLogs: List<String> = listOf("Тактические Шестиугольные Шахматы готовы к бою!"),
+    val activeExplosions: List<HexExplosionEffect> = emptyList(),
     val winner: PlayerColor? = null,
     val isAiThinking: Boolean = false,
-    val turnCount: Int = 1
+    val turnCount: Int = 1,
+    val gamesPlayedCount: Int = 1,
+    val nukesLaunchedCount: Int = 0,
+    val settings: SettingsState = SettingsState()
 )
 
 class ChessViewModel : ViewModel() {
@@ -52,67 +72,80 @@ class ChessViewModel : ViewModel() {
     private val _uiState = MutableStateFlow(GameState())
     val uiState: StateFlow<GameState> = _uiState.asStateFlow()
 
-    fun resetGame() {
+    init {
+        updateAudioEngine()
+    }
+
+    fun navigateTo(screen: AppScreen) {
+        _uiState.value = _uiState.value.copy(currentScreen = screen)
+    }
+
+    fun startNewGame(isVsAiMode: Boolean) {
         board.resetBoard()
-        _uiState.value = GameState(
-            gameLogs = listOf("Новая партия началась! Нанесите ядерный удар по противнику.")
-        )
-    }
-
-    fun toggleVsAi() {
-        val newAiMode = !_uiState.value.isVsAi
-        resetGame()
+        val currentG = _uiState.value.gamesPlayedCount + 1
         _uiState.value = _uiState.value.copy(
-            isVsAi = newAiMode,
-            gameLogs = _uiState.value.gameLogs + if (newAiMode) "Режим: Игрок против 2 ИИ Ботов!" else "Режим: Локальная игра на 3 Игрока!"
+            currentScreen = AppScreen.GAME,
+            activePlayer = PlayerColor.RED,
+            selectedHex = null,
+            validMoves = emptyList(),
+            activeWeapon = TacticalWeapon.NONE,
+            isVsAi = isVsAiMode,
+            redEnergy = 50,
+            blueEnergy = 50,
+            greenEnergy = 50,
+            capturedRed = emptyList(),
+            capturedBlue = emptyList(),
+            capturedGreen = emptyList(),
+            winner = null,
+            turnCount = 1,
+            gamesPlayedCount = currentG,
+            gameLogs = listOf("Новая шестиугольная партия началась! Захватывайте центр для получения энергии.")
         )
     }
 
-    fun selectCell(row: Int, col: Int) {
+    fun selectHex(pos: HexPos) {
         val state = _uiState.value
         if (state.winner != null || state.isAiThinking) return
 
-        val cell = board.getCell(row, col) ?: return
+        val cell = board.getCell(pos) ?: return
 
-        // Handle active tactical weapon targeting
+        // Tactical weapon targeting
         if (state.activeWeapon != TacticalWeapon.NONE) {
-            executeWeaponTarget(row, col)
+            executeWeaponTarget(pos)
             return
         }
 
-        // If a piece is already selected and clicked position is in valid moves
-        val selPos = state.selectedPos
-        if (selPos != null && state.validMoves.contains(Position(row, col))) {
-            movePiece(selPos, Position(row, col))
+        // Move piece if target is in valid moves
+        val selPos = state.selectedHex
+        if (selPos != null && state.validMoves.contains(pos)) {
+            movePiece(selPos, pos)
             return
         }
 
-        // Selecting a piece owned by the active player
+        // Select piece owned by active player
         if (cell.piece != null && cell.piece.color == state.activePlayer) {
-            val moves = board.getValidMoves(Position(row, col))
+            val moves = if (state.settings.showMoveHints) board.getValidMoves(pos) else emptyList()
             _uiState.value = state.copy(
-                selectedPos = Position(row, col),
+                selectedHex = pos,
                 validMoves = moves
             )
             SoundEffectsEngine.playMoveSound()
         } else {
             // Deselect
-            _uiState.value = state.copy(selectedPos = null, validMoves = emptyList())
+            _uiState.value = state.copy(selectedHex = null, validMoves = emptyList())
         }
     }
 
-    private fun movePiece(from: Position, to: Position) {
-        val movingPiece = board.getCell(from.row, from.col)?.piece ?: return
-        val targetCell = board.getCell(to.row, to.col)
+    private fun movePiece(from: HexPos, to: HexPos) {
+        val movingPiece = board.getCell(from)?.piece ?: return
+        val targetCell = board.getCell(to)
         val captured = targetCell?.piece
 
-        // Move piece
-        board.setPiece(from.row, from.col, null)
-        board.setPiece(to.row, to.col, movingPiece)
+        board.setPiece(from, null)
+        board.setPiece(to, movingPiece)
 
-        var logMsg = "${movingPiece.color.displayName}: ${movingPiece.type.displayName} -> (${to.row + 1}, ${to.col + 1})"
+        var logMsg = "${movingPiece.color.displayName}: ${movingPiece.type.displayName} -> (${to.q}, ${to.r})"
 
-        // Handle capture
         if (captured != null) {
             logMsg += " (Захвачен ${captured.color.displayName} ${captured.type.displayName})"
             SoundEffectsEngine.playCaptureSound()
@@ -122,17 +155,16 @@ class ChessViewModel : ViewModel() {
             SoundEffectsEngine.playMoveSound()
         }
 
-        // Center control energy bonus
-        if (to.row in 4..7 && to.col in 4..7) {
-            addEnergy(movingPiece.color, 10)
-            logMsg += " ⚡ Контроль центра (+10 Энергии)"
+        // Center control bonus
+        if (to.distanceTo(HexPos(0, 0)) <= 1) {
+            addEnergy(movingPiece.color, 15)
+            logMsg += " ⚡ Контроль центральной гекс-зоны (+15 Энергии)"
         }
 
         addLog(logMsg)
 
-        // Clear selection and end turn
         _uiState.value = _uiState.value.copy(
-            selectedPos = null,
+            selectedHex = null,
             validMoves = emptyList()
         )
 
@@ -154,19 +186,18 @@ class ChessViewModel : ViewModel() {
         }
 
         if (state.activeWeapon == weapon) {
-            // Cancel weapon selection
             _uiState.value = state.copy(activeWeapon = TacticalWeapon.NONE)
         } else {
             _uiState.value = state.copy(
                 activeWeapon = weapon,
-                selectedPos = null,
+                selectedHex = null,
                 validMoves = emptyList()
             )
-            addLog("Выберите цель на поле для удара [${when(weapon) { TacticalWeapon.NUKE -> "ЯДЕРНАЯ БОМБА" else -> "АВИАУДАР" }}]!")
+            addLog("Выберите цель на шестиугольной доске для удара [${if (weapon == TacticalWeapon.NUKE) "ЯДЕРНАЯ БОМБА" else "АВИАУДАР"}]!")
         }
     }
 
-    private fun executeWeaponTarget(centerR: Int, centerC: Int) {
+    private fun executeWeaponTarget(centerPos: HexPos) {
         val state = _uiState.value
         val player = state.activePlayer
         val weapon = state.activeWeapon
@@ -175,54 +206,48 @@ class ChessViewModel : ViewModel() {
             deductEnergy(player, 100)
             SoundEffectsEngine.playNukeExplosionSound()
 
-            // Destroy 3x3 area
-            val affectedCells = mutableListOf<Position>()
-            for (dr in -1..1) {
-                for (dc in -1..1) {
-                    val r = centerR + dr
-                    val c = centerC + dc
-                    if (r in 0 until board.rows && c in 0 until board.cols) {
-                        board.setPiece(r, c, null) // vaporize piece
-                        board.setCellState(r, c, CellState.CRATER_DESTROYED) // create crater
-                        affectedCells.add(Position(r, c))
-                    }
+            // Nuke destroys target hex + all 6 neighbors (radius 1 ring, 7 hexes total)
+            for (cell in board.getAllCells()) {
+                if (cell.pos.distanceTo(centerPos) <= 1) {
+                    board.setPiece(cell.pos, null)
+                    board.setCellState(cell.pos, CellState.CRATER_DESTROYED)
                 }
             }
 
-            val exp = ExplosionEffect(
+            val exp = HexExplosionEffect(
                 id = "nuke_${System.currentTimeMillis()}",
-                row = centerR,
-                col = centerC,
-                radius = 3.5f,
-                colorHex = 0xFFFF4400
+                hexPos = centerPos,
+                radius = 2.2f,
+                colorHex = 0xFFFF7043
             )
 
             _uiState.value = _uiState.value.copy(
                 activeWeapon = TacticalWeapon.NONE,
+                nukesLaunchedCount = _uiState.value.nukesLaunchedCount + 1,
                 activeExplosions = _uiState.value.activeExplosions + exp
             )
 
-            addLog("🚀 ${player.displayName} нанёс ЯДЕРНЫЙ УДАР по секции (${centerR + 1}, ${centerC + 1})! Клетки уничтожены в кратер!")
+            addLog("🚀 ${player.displayName} нанёс ЯДЕРНЫЙ УДАР по гексу (${centerPos.q}, ${centerPos.r})! Образовался кратер!")
 
         } else if (weapon == TacticalWeapon.AIRSTRIKE) {
             deductEnergy(player, 50)
             SoundEffectsEngine.playAirstrikeSound()
 
-            // Bomb row
-            for (c in 0 until board.cols) {
-                val p = board.getCell(centerR, c)?.piece
-                if (p != null) {
-                    board.setPiece(centerR, c, null)
-                    board.setCellState(centerR, c, CellState.RADIOACTIVE_HAZARD)
+            // Airstrike along hex line (same r coordinate)
+            for (cell in board.getAllCells()) {
+                if (cell.pos.r == centerPos.r) {
+                    if (cell.piece != null) {
+                        board.setPiece(cell.pos, null)
+                        board.setCellState(cell.pos, CellState.RADIOACTIVE_HAZARD)
+                    }
                 }
             }
 
-            val exp = ExplosionEffect(
+            val exp = HexExplosionEffect(
                 id = "airstrike_${System.currentTimeMillis()}",
-                row = centerR,
-                col = centerC,
-                radius = 2.0f,
-                colorHex = 0xFFFFD700
+                hexPos = centerPos,
+                radius = 1.5f,
+                colorHex = 0xFFFFCA28
             )
 
             _uiState.value = _uiState.value.copy(
@@ -230,10 +255,9 @@ class ChessViewModel : ViewModel() {
                 activeExplosions = _uiState.value.activeExplosions + exp
             )
 
-            addLog("✈️ ${player.displayName} вызвал АВИАУДАР по горизонтали ${centerR + 1}! Вражеские позиции разбомблены!")
+            addLog("✈️ ${player.displayName} вызвал АВИАУДАР по линии r=${centerPos.r}!")
         }
 
-        // Remove explosion graphics after 1.5s
         viewModelScope.launch {
             delay(1500)
             _uiState.value = _uiState.value.copy(
@@ -245,7 +269,6 @@ class ChessViewModel : ViewModel() {
     }
 
     private fun checkWinAndAdvanceTurn() {
-        // Check alive players
         val redAlive = board.isKingAlive(PlayerColor.RED)
         val blueAlive = board.isKingAlive(PlayerColor.BLUE)
         val greenAlive = board.isKingAlive(PlayerColor.GREEN)
@@ -259,17 +282,15 @@ class ChessViewModel : ViewModel() {
         if (aliveList.size == 1) {
             val winner = aliveList.first().first
             _uiState.value = _uiState.value.copy(winner = winner)
-            addLog("🏆 ПОБЕДА! ${winner.displayName} уничтожил всех соперников и захватил господство!")
+            addLog("🏆 ПОБЕДА! ${winner.displayName} разгромил соперников!")
             return
         }
 
-        // Advance next player (skip eliminated ones)
         var nextPlayer = _uiState.value.activePlayer.next()
         while (!isPlayerAlive(nextPlayer)) {
             nextPlayer = nextPlayer.next()
         }
 
-        // Add turn energy
         addEnergy(nextPlayer, 15)
 
         val newTurn = _uiState.value.turnCount + 1
@@ -278,7 +299,6 @@ class ChessViewModel : ViewModel() {
             turnCount = newTurn
         )
 
-        // Trigger AI if applicable
         if (_uiState.value.isVsAi && (nextPlayer == PlayerColor.BLUE || nextPlayer == PlayerColor.GREEN)) {
             triggerAiTurn(nextPlayer)
         }
@@ -291,43 +311,37 @@ class ChessViewModel : ViewModel() {
     private fun triggerAiTurn(aiColor: PlayerColor) {
         viewModelScope.launch {
             _uiState.value = _uiState.value.copy(isAiThinking = true)
-            delay(800) // Realistic AI thinking delay
+            delay(_uiState.value.settings.aiDelayMs)
 
             val aiEnergy = getEnergy(aiColor)
 
-            // AI decision: 25% chance to drop a Nuke if energy is 100%
             if (aiEnergy >= 100 && Random.nextFloat() < 0.35f) {
-                // Target opponent king or heavy cluster
-                val targetR = Random.nextInt(2, 10)
-                val targetC = Random.nextInt(2, 10)
+                val allHexes = board.getAllCells().map { it.pos }
+                val targetPos = allHexes.random()
                 _uiState.value = _uiState.value.copy(activeWeapon = TacticalWeapon.NUKE)
-                executeWeaponTarget(targetR, targetC)
+                executeWeaponTarget(targetPos)
                 _uiState.value = _uiState.value.copy(isAiThinking = false)
                 return@launch
             }
 
-            // Find all possible valid moves for AI
-            val allAiPieces = mutableListOf<Pair<Position, List<Position>>>()
-            for (r in 0 until board.rows) {
-                for (c in 0 until board.cols) {
-                    val p = board.getCell(r, c)?.piece
-                    if (p != null && p.color == aiColor) {
-                        val moves = board.getValidMoves(Position(r, c))
-                        if (moves.isNotEmpty()) {
-                            allAiPieces.add(Pair(Position(r, c), moves))
-                        }
+            val allAiPieces = mutableListOf<Pair<HexPos, List<HexPos>>>()
+            for (cell in board.getAllCells()) {
+                val p = cell.piece
+                if (p != null && p.color == aiColor) {
+                    val moves = board.getValidMoves(cell.pos)
+                    if (moves.isNotEmpty()) {
+                        allAiPieces.add(Pair(cell.pos, moves))
                     }
                 }
             }
 
             if (allAiPieces.isNotEmpty()) {
-                // Prefer capture moves
-                val captureMoves = mutableListOf<Pair<Position, Position>>()
-                val regularMoves = mutableListOf<Pair<Position, Position>>()
+                val captureMoves = mutableListOf<Pair<HexPos, HexPos>>()
+                val regularMoves = mutableListOf<Pair<HexPos, HexPos>>()
 
                 for ((from, moves) in allAiPieces) {
                     for (to in moves) {
-                        val targetPiece = board.getCell(to.row, to.col)?.piece
+                        val targetPiece = board.getCell(to)?.piece
                         if (targetPiece != null && targetPiece.color != aiColor) {
                             captureMoves.add(Pair(from, to))
                         } else {
@@ -344,12 +358,52 @@ class ChessViewModel : ViewModel() {
 
                 movePiece(chosenMove.first, chosenMove.second)
             } else {
-                addLog("🤖 ИИ ${aiColor.displayName} пропустил ход (нет доступных ходов).")
+                addLog("🤖 ИИ ${aiColor.displayName} пропустил ход.")
                 checkWinAndAdvanceTurn()
             }
 
             _uiState.value = _uiState.value.copy(isAiThinking = false)
         }
+    }
+
+    // Settings Updates
+    fun updateSettings(
+        isSoundEnabled: Boolean? = null,
+        soundVolume: Float? = null,
+        aiDifficultyName: String? = null,
+        showMoveHints: Boolean? = null,
+        colorTheme: String? = null,
+        particleEffects: Boolean? = null
+    ) {
+        val currSettings = _uiState.value.settings
+        val newSound = isSoundEnabled ?: currSettings.isSoundEnabled
+        val newVol = soundVolume ?: currSettings.soundVolume
+        val newAiDiff = aiDifficultyName ?: currSettings.aiDifficultyName
+
+        val newAiDelay = when (newAiDiff) {
+            "Быстрый" -> 350L
+            "Мастер" -> 1400L
+            else -> 800L
+        }
+
+        val updatedSettings = currSettings.copy(
+            isSoundEnabled = newSound,
+            soundVolume = newVol,
+            aiDifficultyName = newAiDiff,
+            aiDelayMs = newAiDelay,
+            showMoveHints = showMoveHints ?: currSettings.showMoveHints,
+            colorTheme = colorTheme ?: currSettings.colorTheme,
+            particleEffects = particleEffects ?: currSettings.particleEffects
+        )
+
+        _uiState.value = _uiState.value.copy(settings = updatedSettings)
+        updateAudioEngine()
+    }
+
+    private fun updateAudioEngine() {
+        val s = _uiState.value.settings
+        SoundEffectsEngine.isSoundEnabled = s.isSoundEnabled
+        SoundEffectsEngine.soundVolume = s.soundVolume
     }
 
     private fun getEnergy(color: PlayerColor): Int {
@@ -390,7 +444,7 @@ class ChessViewModel : ViewModel() {
 
     private fun addLog(text: String) {
         val logs = _uiState.value.gameLogs.toMutableList()
-        logs.add(0, text) // Most recent first
+        logs.add(0, text)
         if (logs.size > 20) logs.removeAt(logs.lastIndex)
         _uiState.value = _uiState.value.copy(gameLogs = logs)
     }
