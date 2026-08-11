@@ -1,0 +1,6 @@
+{
+  "name": "3-Player Chess",
+  "description": "Tactical 3-player chess with special airstrike abilities, chocolate cornet pawns, destructible board cells, and particle effects.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
